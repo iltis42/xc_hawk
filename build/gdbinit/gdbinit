@@ -1,0 +1,2 @@
+source /home/esp32s3/esp-idf/examples/get-started/xc_hawk/build/gdbinit/symbols
+source /home/esp32s3/esp-idf/examples/get-started/xc_hawk/build/gdbinit/connect
