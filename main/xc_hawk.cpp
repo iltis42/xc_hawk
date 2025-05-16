@@ -17,9 +17,9 @@
 #include "driver/gpio.h"
 
 
-
 #include "driver/i2c.h"
 #include "esp_log.h"
+
 
 #define I2C_MASTER_SCL_IO 10
 #define I2C_MASTER_SDA_IO 9
@@ -33,11 +33,98 @@ static const char *TAG = "i2c_utils";
 extern "C" {
 #include "driver/i2c.h"
 #include "esp_log.h"
+#include "driver/twai.h"
 }
 
+#include "esp_check.h"
 
 #define ICM20602_ADDR     0x68  // or 0x69 depending on AD0 pin
 #define ICM20602_WHO_AM_I 0x75
+
+#include "esp_log.h"
+#include <string.h>  // Für memset
+
+#define TX_GPIO GPIO_NUM_4
+#define RX_GPIO GPIO_NUM_6
+
+
+// Initialisiere den TWAI (CAN) Treiber
+esp_err_t can_init(void) {
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(GPIO_NUM_4, GPIO_NUM_6, TWAI_MODE_NO_ACK);
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_100KBITS();
+    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+    ESP_LOGI(TAG, "Installing TWAI driver...");
+    ESP_RETURN_ON_ERROR(twai_driver_install(&g_config, &t_config, &f_config), TAG, "Failed to install TWAI driver");
+    ESP_LOGI(TAG, "Starting TWAI driver...");
+    return twai_start();
+}
+
+// Sende eine Testnachricht
+esp_err_t can_send_test_message(void) {
+  twai_message_t tx_msg;  // Alle Felder auf 0 setzen
+  memset(&tx_msg, 0, sizeof(tx_msg));
+  tx_msg.identifier = 0x123;
+  tx_msg.data_length_code = 4;
+  tx_msg.flags = 0;
+  tx_msg.self = 1;
+  tx_msg.data[0] = 0xDE;
+  tx_msg.data[1] = 0xAD;
+  tx_msg.data[2] = 0xBE;
+  tx_msg.data[3] = 0xEF;
+  ESP_LOGI(TAG, "Sending test message...");
+  return twai_transmit(&tx_msg, pdMS_TO_TICKS(1000));
+}
+
+// Empfange und überprüfe die Nachricht
+esp_err_t can_receive_and_validate(void) {
+    twai_message_t rx_msg;
+    ESP_LOGI(TAG, "Waiting for message...");
+
+    esp_err_t result = twai_receive(&rx_msg, pdMS_TO_TICKS(1000));
+    if (result == ESP_OK) { 
+        ESP_LOGI(TAG, "Received message: ID=0x%lx Data=%02x %02x %02x %02x",
+                 rx_msg.identifier,
+                 rx_msg.data[0], rx_msg.data[1],
+                 rx_msg.data[2], rx_msg.data[3]);
+        bool valid = (rx_msg.identifier == 0x123 &&
+                      rx_msg.data_length_code == 4 &&
+                      rx_msg.data[0] == 0xDE &&
+                      rx_msg.data[1] == 0xAD &&
+                      rx_msg.data[2] == 0xBE &&
+                      rx_msg.data[3] == 0xEF);
+
+        return valid ? ESP_OK : ESP_FAIL;
+    }
+
+    ESP_LOGW(TAG, "No message received");
+    return result;
+}
+
+// Stoppe und deinstalliere den Treiber
+void can_deinit(void) {
+    ESP_LOGI(TAG, "Stopping and uninstalling TWAI driver...");
+    twai_stop();
+    twai_driver_uninstall();
+}
+
+// Führt den gesamten Selbsttest aus
+esp_err_t can_self_test(void) {
+    if (can_init() != ESP_OK) return ESP_FAIL;
+
+    esp_err_t tx_result = can_send_test_message();
+    esp_err_t rx_result = can_receive_and_validate();
+
+    can_deinit();
+
+    if (tx_result == ESP_OK && rx_result == ESP_OK) {
+        ESP_LOGI(TAG, "CAN self-test PASSED");
+        return ESP_OK;
+    } else {
+        ESP_LOGE(TAG, "CAN self-test FAILED");
+        return ESP_FAIL;
+    }
+}
 
 
 esp_err_t icm20602_check_whoami()
@@ -227,6 +314,15 @@ extern "C" void app_main(void)
 
     qmc5883_read_xyz(&x, &y, &z);
     ESP_LOGI(TAG, "QMC5883 X: %d, Y: %d, Z: %d", x, y, z);
+
+
+    ESP_LOGI("MAIN", "Start CAN Selbsttest...");
+
+    if (can_self_test() == ESP_OK) {
+        ESP_LOGI("MAIN", "CAN-Test ok");
+    } else {
+        ESP_LOGE("MAIN", "CAN-Test fail");
+    }
 
     printf("Minimum free heap size: %" PRIu32 " bytes\n", esp_get_minimum_free_heap_size());
     gpio_set_direction(GPIO_NUM_46, GPIO_MODE_INPUT);   // Set GPIO46 as input
