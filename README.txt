@@ -9,7 +9,7 @@
 
 2) Compile the hello_word application under ~/esp-idf/examples/get-started/hello_world/ to validate EPS-IDF installation
 
-3) If hello_word works, clone and compile this repo:
+3) If the hello_world example works, clone and compile this repo:
   cd ~/esp/esp-idf/examples/get-started/; git clone https://github.com/iltis42/xc_hawk.git
   cd xc_hawk;
   if.py build;
